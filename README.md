@@ -3,8 +3,8 @@
 Modern Streamlit-based IVR editing tool with a built-in web waveform editor powered by WaveSurfer.js.
 
 ## Features
-- Upload IVR zip archives and automatically unpack paired `.wav`/`.txt` files into project folders.
-- Manage projects with **raw**, **corrected**, and **bad_input** subfolders.
+- Upload IVR zip archives and automatically unpack `.wav` files into project folders.
+- Manage projects with **source**, **corrected**, and **bad_input** subfolders.
 - Real-time waveform editor (React/JS) supporting selection, delete, trim, insert silence, and bad-input tagging with keyboard shortcuts.
 - Export edited audio back to Streamlit for saving into the corrected folder.
 - Quick actions for marking original audio as bad input or skipping to the next file.
@@ -15,5 +15,5 @@ Modern Streamlit-based IVR editing tool with a built-in web waveform editor powe
    ```bash
    streamlit run app.py
    ```
-3. Use the **IVR projects** page to import a zip, export/delete projects, and launch the WAV editor.
+3. Provide a project name, upload a zip of `.wav` files, and start editing.
 
