@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Waveform Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; margin: 0; color: #101828; background: #0b1021; }
+    .wrapper { padding: 16px; background: linear-gradient(180deg, #0b1021 0%, #151a30 100%); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+    .header { display: flex; align-items: center; justify-content: space-between; color: #e4e7ec; margin-bottom: 12px; }
+    .title { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+    .badge { background: #1d2939; color: #cbd5e1; padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+    #waveform { background: #0f172a; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; }
+    #timeline { color: #cbd5e1; font-size: 12px; margin-bottom: 6px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 14px; }
+    button { background: #1d4ed8; color: white; border: none; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: transform 0.08s ease, box-shadow 0.1s ease; display: flex; gap: 8px; align-items: center; justify-content: center; }
+    button.secondary { background: #1f2937; color: #e2e8f0; }
+    button.danger { background: #dc2626; }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .keyboard-help { position: fixed; right: 26px; bottom: 26px; }
+    .kbd-toggle { background: #111827; border: 1px solid #1f2937; border-radius: 50%; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+    .kbd-panel { position: absolute; bottom: 60px; right: 0; width: 280px; background: #0f172a; border: 1px solid #1f2937; border-radius: 12px; padding: 12px; color: #e2e8f0; box-shadow: 0 10px 40px rgba(0,0,0,0.45); display: none; }
+    .kbd-panel.active { display: block; }
+    .kbd-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px; }
+    .kbd-key { background: #111827; padding: 4px 8px; border-radius: 6px; border: 1px solid #1f2937; color: #cbd5e1; }
+    .status-bar { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: #cbd5e1; font-size: 13px; }
+    .pill { padding: 4px 8px; background: #111827; border: 1px solid #1f2937; border-radius: 999px; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div class="title">Waveform Editor</div>
+      <div class="badge" id="fileName">--</div>
+    </div>
+    <div id="timeline"></div>
+    <div id="waveform"></div>
+    <div class="status-bar">
+      <span class="pill" id="selectionStatus">Selection: none</span>
+      <span class="pill" id="cursorStatus">Cursor: 0.00s</span>
+      <span class="pill" id="badgeStatus">Mode: editing</span>
+    </div>
+    <div class="controls">
+      <button id="btnDelete" class="danger">🧹 Delete Selection</button>
+      <button id="btnSilence">🤫 Insert 0.5s Silence</button>
+      <button id="btnTrim" class="secondary">✂️ Trim to Selection</button>
+      <button id="btnReset" class="secondary">⏪ Reset</button>
+      <button id="btnBad" class="danger">🚫 Mark Bad Input</button>
+      <button id="btnExport">💾 Send to Streamlit</button>
+    </div>
+  </div>
+  <div class="keyboard-help">
+    <div class="kbd-panel" id="kbdPanel">
+      <div class="kbd-row"><span>Delete selection</span><span class="kbd-key">Del</span></div>
+      <div class="kbd-row"><span>Insert 0.5s silence</span><span class="kbd-key">Shift+S</span></div>
+      <div class="kbd-row"><span>Trim to selection</span><span class="kbd-key">T</span></div>
+      <div class="kbd-row"><span>Reset audio</span><span class="kbd-key">R</span></div>
+      <div class="kbd-row"><span>Toggle bad input</span><span class="kbd-key">B</span></div>
+      <div class="kbd-row"><span>Send edited audio</span><span class="kbd-key">Ctrl+E</span></div>
+    </div>
+    <button class="kbd-toggle" id="kbdToggle">⌨️</button>
+  </div>
+
+  <script src="https://unpkg.com/wavesurfer.js@7"></script>
+  <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+  <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js"></script>
+  <script src="https://unpkg.com/streamlit-component-lib/dist/index.js"></script>
+  <script>
+    const audioCache = { original: null, edited: null };
+    let wavesurfer;
+    let regionPlugin;
+    let currentRegion = null;
+    let badInput = false;
+
+    const fileNameEl = document.getElementById('fileName');
+    const selectionStatusEl = document.getElementById('selectionStatus');
+    const cursorStatusEl = document.getElementById('cursorStatus');
+    const badgeStatusEl = document.getElementById('badgeStatus');
+
+    const kbdToggle = document.getElementById('kbdToggle');
+    const kbdPanel = document.getElementById('kbdPanel');
+    kbdToggle.addEventListener('click', () => kbdPanel.classList.toggle('active'));
+
+    function updateSelectionStatus(region) {
+      if (!region) {
+        selectionStatusEl.textContent = 'Selection: none';
+        return;
+      }
+      selectionStatusEl.textContent = `Selection: ${region.start.toFixed(2)}s - ${region.end.toFixed(2)}s`;
+    }
+
+    function updateCursor(time) {
+      cursorStatusEl.textContent = `Cursor: ${time.toFixed(2)}s`;
+    }
+
+    function createWaveform(arrayBuffer, fileName) {
+      fileNameEl.textContent = fileName || '--';
+      if (wavesurfer) {
+        wavesurfer.destroy();
+        document.getElementById('waveform').innerHTML = '';
+      }
+      regionPlugin = WaveSurfer.Regions.create();
+      const timeline = WaveSurfer.Timeline.create({ container: '#timeline', height: 20, primaryColor: '#94a3b8' });
+      wavesurfer = WaveSurfer.create({
+        container: '#waveform',
+        waveColor: '#60a5fa',
+        progressColor: '#3b82f6',
+        cursorColor: '#e5e7eb',
+        height: 160,
+        backend: 'WebAudio',
+        plugins: [regionPlugin, timeline],
+      });
+
+      wavesurfer.load(arrayBuffer);
+      wavesurfer.on('interaction', () => wavesurfer.playPause());
+      wavesurfer.on('timeupdate', updateCursor);
+      regionPlugin.on('region-created', (region) => {
+        if (currentRegion) currentRegion.remove();
+        currentRegion = region;
+        updateSelectionStatus(region);
+      });
+    }
+
+    function bufferFromArrayBuffer(buffer) {
+      return new Promise((resolve, reject) => {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.decodeAudioData(buffer.slice(0), resolve, reject);
+      });
+    }
+
+    function mergeFloat32Arrays(arrays) {
+      const length = arrays.reduce((acc, a) => acc + a.length, 0);
+      const result = new Float32Array(length);
+      let offset = 0;
+      arrays.forEach((a) => { result.set(a, offset); offset += a.length; });
+      return result;
+    }
+
+    function encodeWavFromBuffer(audioBuffer) {
+      const numOfChan = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const format = 1;
+      const bitDepth = 16;
+      const samples = audioBuffer.getChannelData(0);
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+
+      function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+      }
+
+      const floatTo16BitPCM = (output, offset, input) => {
+        for (let i = 0; i < input.length; i++, offset += 2) {
+          let s = Math.max(-1, Math.min(1, input[i]));
+          output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        }
+      };
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, format, true);
+      view.setUint16(22, numOfChan, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numOfChan * bitDepth / 8, true);
+      view.setUint16(32, numOfChan * bitDepth / 8, true);
+      view.setUint16(34, bitDepth, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+      floatTo16BitPCM(view, 44, samples);
+      return buffer;
+    }
+
+    async function renderEditedBuffer(floatData, sampleRate) {
+      const ctx = new OfflineAudioContext(1, floatData.length, sampleRate);
+      const buffer = ctx.createBuffer(1, floatData.length, sampleRate);
+      buffer.copyToChannel(floatData, 0);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start();
+      const rendered = await ctx.startRendering();
+      return rendered;
+    }
+
+    async function updateWaveformWithFloat32(floatData, sampleRate) {
+      const rendered = await renderEditedBuffer(floatData, sampleRate);
+      const wav = encodeWavFromBuffer(rendered);
+      audioCache.edited = wav;
+      wavesurfer.load(wav);
+    }
+
+    async function applyDelete() {
+      if (!currentRegion || !audioCache.original) return;
+      const decoded = await bufferFromArrayBuffer(audioCache.edited || audioCache.original);
+      const channel = decoded.getChannelData(0);
+      const startIdx = Math.floor(currentRegion.start * decoded.sampleRate);
+      const endIdx = Math.floor(currentRegion.end * decoded.sampleRate);
+      const first = channel.slice(0, startIdx);
+      const second = channel.slice(endIdx);
+      const merged = mergeFloat32Arrays([first, second]);
+      await updateWaveformWithFloat32(merged, decoded.sampleRate);
+    }
+
+    async function applySilence() {
+      const decoded = await bufferFromArrayBuffer(audioCache.edited || audioCache.original);
+      const channel = decoded.getChannelData(0);
+      const insertAt = currentRegion ? currentRegion.start : wavesurfer.getCurrentTime();
+      const insertIndex = Math.floor(insertAt * decoded.sampleRate);
+      const silence = new Float32Array(Math.floor(0.5 * decoded.sampleRate));
+      const first = channel.slice(0, insertIndex);
+      const second = channel.slice(insertIndex);
+      const merged = mergeFloat32Arrays([first, silence, second]);
+      await updateWaveformWithFloat32(merged, decoded.sampleRate);
+    }
+
+    async function applyTrim() {
+      if (!currentRegion || !audioCache.original) return;
+      const decoded = await bufferFromArrayBuffer(audioCache.edited || audioCache.original);
+      const channel = decoded.getChannelData(0);
+      const startIdx = Math.floor(currentRegion.start * decoded.sampleRate);
+      const endIdx = Math.floor(currentRegion.end * decoded.sampleRate);
+      const trimmed = channel.slice(startIdx, endIdx);
+      await updateWaveformWithFloat32(trimmed, decoded.sampleRate);
+    }
+
+    function setBadInputFlag() {
+      badInput = !badInput;
+      badgeStatusEl.textContent = badInput ? 'Mode: bad input' : 'Mode: editing';
+      badgeStatusEl.style.color = badInput ? '#fca5a5' : '#cbd5e1';
+    }
+
+    async function exportAudio() {
+      const buffer = audioCache.edited || audioCache.original;
+      if (!buffer) return;
+      const bytes = new Uint8Array(buffer);
+      const binary = bytes.reduce((acc, b) => acc + String.fromCharCode(b), '');
+      const base64 = btoa(binary);
+      Streamlit.setComponentValue({ audioBase64: base64, badInput });
+    }
+
+    async function onRender(event) {
+      const { audioBase64, fileName } = event.detail.args;
+      const binary = atob(audioBase64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+      const buffer = bytes.buffer;
+      audioCache.original = buffer;
+      audioCache.edited = null;
+      badInput = false;
+      badgeStatusEl.textContent = 'Mode: editing';
+      await createWaveform(buffer, fileName);
+    }
+
+    document.getElementById('btnDelete').addEventListener('click', applyDelete);
+    document.getElementById('btnSilence').addEventListener('click', applySilence);
+    document.getElementById('btnTrim').addEventListener('click', applyTrim);
+    document.getElementById('btnReset').addEventListener('click', () => {
+      if (audioCache.original) wavesurfer.load(audioCache.original);
+      audioCache.edited = null;
+      badInput = false;
+      badgeStatusEl.textContent = 'Mode: editing';
+    });
+    document.getElementById('btnBad').addEventListener('click', setBadInputFlag);
+    document.getElementById('btnExport').addEventListener('click', exportAudio);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Delete') { applyDelete(); }
+      if (e.key.toLowerCase() === 't') { applyTrim(); }
+      if (e.key.toLowerCase() === 'r') { document.getElementById('btnReset').click(); }
+      if (e.key.toLowerCase() === 'b') { setBadInputFlag(); }
+      if (e.key.toLowerCase() === 's' && e.shiftKey) { applySilence(); }
+      if (e.key.toLowerCase() === 'e' && e.ctrlKey) { exportAudio(); }
+    });
+
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight(420);
+  </script>
+</body>
+</html>
